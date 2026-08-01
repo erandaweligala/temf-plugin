@@ -19,85 +19,94 @@ import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
 
 import java.util.Collections;
-
 
 
 @Configuration
 public class SwaggerConfig {
 
-    @Value("${app.host}")
+    @Value("${app.protocol:http}")
+    private String protocol;
+
+    @Value("${app.host:localhost}")
     private String host;
+
+    @Value("${app.port:}")
+    private String port;
+
+    @Value("${app.context.absolute:}")
+    private String absoluteContext;
+
+    @Value("${app.context.relative:}")
+    private String relativeContext;
+
+    @Value("${app.swagger.title:API Documentation}")
+    private String title;
+
+    @Value("${app.swagger.description:}")
+    private String description;
+
+    @Value("${app.swagger.version:1.0.0}")
+    private String version;
 
 
     @Bean
-    public OpenAPI springShopOpenAPI() {
+    public OpenAPI tmfOpenAPI() {
         OpenAPI openAPI = new OpenAPI();
         openAPI.info(apiV3Info());
         Server server = new Server();
-        server.setUrl(host);
+        server.setUrl(serverUrl());
         openAPI.setServers(Collections.singletonList(server));
         return openAPI;
     }
 
+    /**
+     * Absolute URL the "Try it out" calls are sent to. {@code app.host} alone is not a valid
+     * server URL, swagger-ui resolves it relative to the page and the calls never reach the
+     * service, so the scheme and the port are always part of the URL.
+     */
+    private String serverUrl() {
+        String url = host.contains("://")
+                ? trimTrailingSlash(host)
+                : protocol + "://" + trimTrailingSlash(host) + portSuffix();
+        return url + gatewayPrefix();
+    }
+
+    private String portSuffix() {
+        return StringUtils.hasText(port) ? ":" + port.trim() : "";
+    }
+
+    /**
+     * Controller mappings already carry {@code app.context.absolute}, so the documented paths are
+     * complete for a direct call. When the service sits behind a gateway that routes on a
+     * different prefix, {@code app.context.relative} holds that prefix and it has to be part of
+     * the server URL instead.
+     */
+    private String gatewayPrefix() {
+        String relative = trimTrailingSlash(relativeContext);
+        if (!StringUtils.hasText(relative) || absoluteContext.startsWith(relative)) {
+            return "";
+        }
+        return relative.startsWith("/") ? relative : "/" + relative;
+    }
+
+    private String trimTrailingSlash(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
+    }
+
     private Info apiV3Info() {
-        return new Info().title("Swagger Title")
-                .description("Swagger Description")
-                .version("Swagger Version")
+        return new Info().title(title)
+                .description(description)
+                .version(version)
                 .contact(new Contact()
                         .name("Admin")
                         .url("http://www.axiatadigitallabs.com")
                         .email("adl@axiatadigitallabs.com"));
     }
-
-//    @Bean
-//    public Docket api(TmfPluginConfiguration configuration) {
-//
-//        String host = configuration.getPort() == null ? configuration.getHost() : configuration.getHost() + ":" + configuration.getPort();
-//
-//        return new Docket(DocumentationType.SWAGGER_2)
-//                .protocols(Stream.of(configuration.getProtocol()).collect(Collectors.toSet()))
-//                .host(host)
-//                .select().apis(RequestHandlerSelectors.withClassAnnotation(RestController.class))
-//                .paths(regex("/.*"))
-//                .build()
-//                .apiInfo(apiInfo(configuration.getSwagger())).pathProvider(new BasePathAwareRelativePathProvider(configuration.getContext().getRelative()));
-//    }
-
-//    private ApiInfo apiInfo(TmfPluginConfiguration.SwaggerConfiguration configuration) {
-//        return new ApiInfo(
-//                configuration.getTitle(),
-//                configuration.getDescription(),
-//                configuration.getVersion(),
-//                "",
-//                new Contact("Admin", "http://www.axiatadigitallabs.com", "adl@axiatadigitallabs.com"),
-//                "License of API", "API license URL", Collections.emptyList());
-//    }
-
-//    class BasePathAwareRelativePathProvider extends AbstractPathProvider {
-//        private String swaggerCall;
-//
-//        public BasePathAwareRelativePathProvider(String swaggerCall) {
-//            this.swaggerCall = swaggerCall;
-//        }
-//
-//        @Override
-//        protected String applicationPath() {
-//            return swaggerCall;
-//        }
-//
-//        @Override
-//        protected String getDocumentationPath() {
-//            return swaggerCall;
-//        }
-//
-//        @Override
-//        public String getOperationPath(String operationPath) {
-//            UriComponentsBuilder uriComponentsBuilder = UriComponentsBuilder.fromPath("/");
-//            return Paths.removeAdjacentForwardSlashes(
-//                    uriComponentsBuilder.path(operationPath.replaceFirst(swaggerCall, "")).build().toString());
-//        }
-//    }
 }
-

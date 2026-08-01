@@ -10,7 +10,7 @@
     </parent>
     <groupId>com.adl.et.telco.dte.mvno</groupId>
     <artifactId>tmf-plugin</artifactId>
-    <version>5.2.10</version>
+    <version>5.2.11</version>
     <name>TMF plugin</name>
     <description>TMF plugin for services</description>
     <packaging>jar</packaging>

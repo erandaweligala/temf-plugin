@@ -48,3 +48,27 @@ app:
     description: "TMF API Reference : TMF 622 - Product Ordering Management"
     version: 4.0.0
 ```
+
+#### API documentation
+
+The plugin ships `springdoc-openapi-ui`, so a service that enables `@TmfPlugin` exposes:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/swagger-ui.html` | Swagger UI. Open this one — it redirects to `/swagger-ui/index.html?configUrl=/v3/api-docs/swagger-config` |
+| `/swagger-ui/index.html` | UI resource. Opening it without the `configUrl` query parameter shows *Failed to load remote configuration* |
+| `/v3/api-docs` | OpenAPI 3 document as JSON |
+| `/v3/api-docs.yaml` | OpenAPI 3 document as YAML |
+| `/v3/api-docs/swagger-config` | UI bootstrap configuration fetched by swagger-ui |
+
+These paths are relative to the service root, not to `app.context.absolute`. With
+`server.port: 8088` the UI is at `http://localhost:8088/swagger-ui.html`.
+
+The `Info` block is taken from `app.swagger.*`. The documented server URL is built as
+`app.protocol://app.host:app.port`, with `app.context.relative` appended when it differs from
+`app.context.absolute` — that is the case when a gateway routes to the service on its own prefix.
+Paths in the document already contain `app.context.absolute`, because that is what the
+controllers are mapped on.
+
+Do not add `springfox` to a service that uses the plugin. Springfox serves a different, older UI
+and both libraries register resource handlers for the documentation paths.
