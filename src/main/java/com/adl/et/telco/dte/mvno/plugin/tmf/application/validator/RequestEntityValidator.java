@@ -15,8 +15,8 @@ package com.adl.et.telco.dte.mvno.plugin.tmf.application.validator;
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.ValidationException;
 import org.springframework.stereotype.Component;
 
-import jakarta.validation.ConstraintViolation;
-import jakarta.validation.Validator;
+import javax.validation.ConstraintViolation;
+import javax.validation.Validator;
 import java.util.List;
 import java.util.Set;
 

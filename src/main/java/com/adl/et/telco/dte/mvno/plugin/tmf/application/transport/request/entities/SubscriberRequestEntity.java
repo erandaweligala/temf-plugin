@@ -2,7 +2,7 @@ package com.adl.et.telco.dte.mvno.plugin.tmf.application.transport.request.entit
 
 import lombok.Data;
 
-import jakarta.validation.constraints.NotEmpty;
+import javax.validation.constraints.NotEmpty;
 
 @Data
 public class SubscriberRequestEntity {

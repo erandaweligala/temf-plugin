@@ -1,11 +1,8 @@
 package com.adl.et.telco.dte.mvno.plugin.tmf.application.config;
 
-import org.apache.hc.client5.http.config.RequestConfig;
-import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
-import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
-import org.apache.hc.core5.util.TimeValue;
-import org.apache.hc.core5.util.Timeout;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,9 +12,13 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class BeanConfigurations {
+
+    private static final int TIMEOUT_MILLIS = 30_000;
+    private static final long CONNECTION_TIME_TO_LIVE_MINUTES = 5;
 
     @Value("${tmf.http.pool.max-total:200}")
     private int httpPoolMaxTotal;
@@ -33,15 +34,14 @@ public class BeanConfigurations {
 
     @Bean
     public ClientHttpRequestFactory clientHttpRequestFactory() {
-        PoolingHttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
-                .setMaxConnTotal(httpPoolMaxTotal)
-                .setMaxConnPerRoute(httpPoolMaxPerRoute)
-                .setConnectionTimeToLive(TimeValue.ofMinutes(5))
-                .build();
+        PoolingHttpClientConnectionManager connectionManager =
+                new PoolingHttpClientConnectionManager(CONNECTION_TIME_TO_LIVE_MINUTES, TimeUnit.MINUTES);
+        connectionManager.setMaxTotal(httpPoolMaxTotal);
+        connectionManager.setDefaultMaxPerRoute(httpPoolMaxPerRoute);
 
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectionRequestTimeout(Timeout.ofSeconds(30))
-                .setResponseTimeout(Timeout.ofSeconds(30))
+                .setConnectionRequestTimeout(TIMEOUT_MILLIS)
+                .setSocketTimeout(TIMEOUT_MILLIS)
                 .build();
         return new HttpComponentsClientHttpRequestFactory(
                 HttpClients.custom()

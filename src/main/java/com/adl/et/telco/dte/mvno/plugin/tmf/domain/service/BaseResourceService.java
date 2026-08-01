@@ -12,7 +12,7 @@ import com.adl.et.telco.dte.mvno.plugin.tmf.domain.exception.DomainException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.notification.ResourceNotificationCreator;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.processor.ResourceProcessor;
 
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
