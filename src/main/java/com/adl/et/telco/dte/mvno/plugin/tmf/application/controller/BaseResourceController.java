@@ -2,6 +2,7 @@ package com.adl.et.telco.dte.mvno.plugin.tmf.application.controller;
 
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.BaseException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.CircuitBreakerException;
+import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.FilterException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.ServerException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.ValidationException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.application.transport.request.entities.PatchDefRequestEntity;
@@ -39,6 +40,7 @@ public abstract class BaseResourceController<T extends BaseResourceDocument, C, 
 
     private static final String RESULT_COUNT_HEADER = "X-Result-Count";
     private static final String TOTAL_COUNT_HEADER = "X-Total-Count";
+    private static final String PAGINATION_ERROR_CODE = "INVALID_PAGINATION";
 
     private final BaseResourceService<T> service;
     private final ResponseTransformer<T> transformer;
@@ -211,7 +213,8 @@ public abstract class BaseResourceController<T extends BaseResourceDocument, C, 
     }
 
     /**
-     * Creating pageable using limit and offset.
+     * Creating pageable using limit and offset. Either parameter may be given on its own; a
+     * missing offset starts at the beginning and a missing limit returns the remaining resources.
      *
      * @param offsetString pagination offset.
      * @param limitString  limit offset.
@@ -219,15 +222,44 @@ public abstract class BaseResourceController<T extends BaseResourceDocument, C, 
      */
     private Pageable createPageable(String offsetString, String limitString) {
 
-        // Check case where necessary params are not defined and create pagination disabled Pageable.
-        if (offsetString == null || limitString == null) {
+        // Check case where no pagination params are defined and create pagination disabled Pageable.
+        if (offsetString == null && limitString == null) {
             return new Pageable();
         }
 
-        int limit = Integer.parseInt(limitString);
-        long offset = Long.parseLong(offsetString);
+        long offset = parsePaginationParam("offset", offsetString);
+        long limit = parsePaginationParam("limit", limitString);
 
-        return new Pageable(offset, limit);
+        return new Pageable(offset, (int) Math.min(limit, Integer.MAX_VALUE));
+    }
+
+    /**
+     * Parse a pagination query parameter.
+     *
+     * @param name  Name of the parameter, for error reporting.
+     * @param value Received value.
+     * @return Parsed value, 0 when the parameter was not given.
+     */
+    private long parsePaginationParam(String name, String value) {
+
+        if (value == null || value.trim().isEmpty()) {
+            return 0;
+        }
+
+        long parsed;
+
+        try {
+            parsed = Long.parseLong(value.trim());
+        } catch (NumberFormatException e) {
+            throw new FilterException("Query parameter '" + name + "' must be a number but was: " + value,
+                    PAGINATION_ERROR_CODE);
+        }
+
+        if (parsed < 0) {
+            throw new FilterException("Query parameter '" + name + "' must not be negative", PAGINATION_ERROR_CODE);
+        }
+
+        return parsed;
     }
 
     /**
@@ -243,10 +275,13 @@ public abstract class BaseResourceController<T extends BaseResourceDocument, C, 
         }
 
         // Remove lower level field selection
-        return Arrays.stream(fields.split(","))
-                .filter(s -> !s.contains("."))
+        String processed = Arrays.stream(fields.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty() && !s.contains("."))
                 .reduce((s, s2) -> s.concat(",").concat(s2))
                 .orElse(null);
+
+        return (processed == null || processed.isEmpty()) ? null : processed;
     }
 
     /**

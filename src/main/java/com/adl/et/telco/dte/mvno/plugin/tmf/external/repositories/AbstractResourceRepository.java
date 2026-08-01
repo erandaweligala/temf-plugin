@@ -1,5 +1,6 @@
 package com.adl.et.telco.dte.mvno.plugin.tmf.external.repositories;
 
+import com.adl.et.telco.dte.mvno.plugin.tmf.application.exception.type.FilterException;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.boundary.ResourceRepositoryInterface;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.entities.*;
 import com.adl.et.telco.dte.mvno.plugin.tmf.external.repositories.utils.MongoSequenceEntity;
@@ -8,12 +9,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
-import org.springframework.data.mongodb.core.aggregation.AggregationResults;
-import org.springframework.data.mongodb.core.aggregation.FacetOperation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.http.HttpStatus;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -24,8 +22,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * Base repository for Resource entities using MongoDB.
@@ -37,6 +35,16 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
     public static final String SEQUENCE_COLLECTION = "idSequence";
 
     private static final long ID_BLOCK_SIZE = 100;
+
+    private static final String FILTERS_FIELD = "filters";
+    private static final String FILTER_ERROR_CODE = "INVALID_FILTER";
+    private static final String COUNT_FIELD = "total";
+
+    private static final Pattern INTEGER_VALUE = Pattern.compile("^[+-]?\\d+$");
+    private static final Pattern DECIMAL_VALUE = Pattern.compile("^[+-]?\\d+\\.\\d+$");
+    private static final Pattern DATE_VALUE = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern DATE_TIME_VALUE =
+            Pattern.compile("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})$");
 
     private final MongoTemplate mongoTemplate;
     private final Class<T> clazz;
@@ -77,7 +85,7 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         // -------------------------------
         if (filters != null && !filters.isEmpty()) {
             List<Filter> filtersWithout = filters.stream()
-                    .filter(rs -> !"filters".equals(rs.getField()))
+                    .filter(rs -> !FILTERS_FIELD.equals(rs.getField()))
                     .collect(Collectors.toList());
 
             if (!filtersWithout.isEmpty()) {
@@ -99,6 +107,12 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
             finalCriteria.andOperator(allCriteria.toArray(new Criteria[0]));
         }
 
+        // Custom aggregation stages contributed by the concrete repository.
+        List<AggregationOperation> customOperations = new ArrayList<>();
+        addOperations(customOperations);
+
+        List<String> projectionFields = parseFields(fields);
+
         // -------------------------------
         // 2. Pagination path (aggregation)
         // -------------------------------
@@ -109,34 +123,31 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
                 baseOps.add(Aggregation.match(finalCriteria));
             }
 
+            baseOps.addAll(customOperations);
+
             // Sorting (only for paged)
             baseOps.add(Aggregation.sort(Sort.Direction.DESC, "lastUpdate"));
 
             // Projection
-            if (fields != null && !fields.isEmpty()) {
-                baseOps.add(Aggregation.project(fields.split(",")));
-            } else {
-                baseOps.add(Aggregation.project(clazz));
-            }
+            baseOps.add(createProjection(projectionFields));
 
-            // Add skip/limit
-            baseOps.add(Aggregation.skip(pageable.getOffset()));
-            baseOps.add(Aggregation.limit(pageable.getLimit()));
+            // Add skip/limit. Mongo rejects a non-positive $limit, so the stage is only added
+            // when a limit was actually requested.
+            if (pageable.getOffset() > 0) {
+                baseOps.add(Aggregation.skip(pageable.getOffset()));
+            }
+            if (pageable.getLimit() > 0) {
+                baseOps.add(Aggregation.limit(pageable.getLimit()));
+            }
 
             Aggregation resultAgg = Aggregation.newAggregation(baseOps);
-
-            // Count query (simple, not aggregation)
-            Query countQuery = new Query();
-            if (!allCriteria.isEmpty()) {
-                countQuery.addCriteria(finalCriteria);
-            }
 
             // Run in parallel using shared executor (not per-request pool)
             CompletableFuture<List<T>> resultsFuture = CompletableFuture.supplyAsync(
                     () -> mongoTemplate.aggregate(resultAgg, clazz, clazz).getMappedResults(), queryExecutor);
 
             CompletableFuture<Long> countFuture = CompletableFuture.supplyAsync(
-                    () -> mongoTemplate.count(countQuery, clazz), queryExecutor);
+                    () -> count(allCriteria.isEmpty() ? null : finalCriteria, customOperations), queryExecutor);
 
             List<T> results = resultsFuture.join();
             Long total = countFuture.join();
@@ -145,17 +156,33 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         }
 
         // -------------------------------
-        // 3. No pagination path (direct find)
+        // 3. No pagination path
         // -------------------------------
+
+        // Custom stages can only be honoured through the aggregation framework.
+        if (!customOperations.isEmpty()) {
+            List<AggregationOperation> ops = new ArrayList<>();
+
+            if (!allCriteria.isEmpty()) {
+                ops.add(Aggregation.match(finalCriteria));
+            }
+
+            ops.addAll(customOperations);
+            ops.add(createProjection(projectionFields));
+
+            List<T> aggregated = mongoTemplate.aggregate(Aggregation.newAggregation(ops), clazz, clazz)
+                    .getMappedResults();
+
+            return new Page<>(aggregated, aggregated.size());
+        }
+
         Query query = new Query();
         if (!allCriteria.isEmpty()) {
             query.addCriteria(finalCriteria);
         }
 
         // Projection (include only requested fields)
-        if (fields != null && !fields.isEmpty()) {
-            Arrays.stream(fields.split(",")).forEach(f -> query.fields().include(f));
-        }
+        projectionFields.forEach(f -> query.fields().include(f));
 
         // No global sort here – avoids in-memory full collection sort
         // If business requires sort, ensure an index exists and add it here.
@@ -164,6 +191,74 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
 
         // total == results.size() on this path — no skip/limit applied, so count() would be redundant
         return new Page<>(results, results.size());
+    }
+
+    /**
+     * Count matching documents. A plain count is used unless the concrete repository contributed
+     * custom aggregation stages, in which case the count has to run through the same pipeline so
+     * that the total stays consistent with the returned page.
+     *
+     * @param criteria         Match criteria, null when no filters were given.
+     * @param customOperations Custom stages contributed via {@link #addOperations(List)}.
+     * @return Total number of matching documents.
+     */
+    private long count(Criteria criteria, List<AggregationOperation> customOperations) {
+
+        if (customOperations.isEmpty()) {
+            Query countQuery = new Query();
+
+            if (criteria != null) {
+                countQuery.addCriteria(criteria);
+            }
+
+            return mongoTemplate.count(countQuery, clazz);
+        }
+
+        List<AggregationOperation> countOps = new ArrayList<>();
+
+        if (criteria != null) {
+            countOps.add(Aggregation.match(criteria));
+        }
+
+        countOps.addAll(customOperations);
+        countOps.add(Aggregation.count().as(COUNT_FIELD));
+
+        Document result = mongoTemplate.aggregate(Aggregation.newAggregation(countOps), clazz, Document.class)
+                .getUniqueMappedResult();
+
+        return result == null ? 0L : result.get(COUNT_FIELD, Number.class).longValue();
+    }
+
+    /**
+     * Split the comma separated field selection, dropping blanks so that a trailing comma or a
+     * space after a comma does not reach MongoDB as an empty field name.
+     *
+     * @param fields Comma separated fields to select.
+     * @return Field names to project.
+     */
+    private List<String> parseFields(String fields) {
+
+        if (fields == null || fields.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return Arrays.stream(fields.split(","))
+                .map(String::trim)
+                .filter(field -> !field.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Create the projection stage for the given field selection.
+     *
+     * @param projectionFields Fields to select, empty to project the full entity.
+     * @return Projection operation.
+     */
+    private AggregationOperation createProjection(List<String> projectionFields) {
+
+        return projectionFields.isEmpty()
+                ? Aggregation.project(clazz)
+                : Aggregation.project(projectionFields.toArray(new String[0]));
     }
 
 
@@ -222,9 +317,11 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
     }
 
     /**
-     * Implement to modify the aggregation operations.
+     * Implement to add custom MongoDB aggregation operations to the query pipeline. The added
+     * operations run right after the filter match stage, before sorting and projection, and are
+     * applied to the total count as well so that the count stays consistent with the page.
      *
-     * @param operations List of default MongoDB aggregation operations.
+     * @param operations List to add the custom aggregation operations to.
      */
     protected void addOperations(List<AggregationOperation> operations) {
 
@@ -249,7 +346,7 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         List<Criteria> criteriaList = new ArrayList<>();
 
         for (Filter filter : filters) {
-            if (filter.getValue() == null || filter.getValue().length == 0) {
+            if (filter.getValue() == null || filter.getValue().length == 0 || filter.getOperation() == null) {
                 continue;
             }
 
@@ -258,12 +355,7 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
 
             switch (filter.getOperation()) {
                 case IS:
-                    // Boolean support
-                    if ("true".equalsIgnoreCase(firstValue) || "false".equalsIgnoreCase(firstValue)) {
-                        criteriaList.add(Criteria.where(field).is(Boolean.parseBoolean(firstValue)));
-                    } else {
-                        criteriaList.add(Criteria.where(field).in(filter.getValue()));
-                    }
+                    criteriaList.add(createEqualityCriteria(field, filter.getValue()));
                     break;
 
                 case GT:
@@ -283,8 +375,7 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
                     break;
 
                 case REGEX:
-                    Pattern pattern = Pattern.compile(firstValue, Pattern.CASE_INSENSITIVE);
-                    criteriaList.add(Criteria.where(field).regex(pattern));
+                    criteriaList.add(Criteria.where(field).regex(compilePattern(firstValue, true)));
                     break;
 
                 default:
@@ -296,6 +387,62 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         return criteriaList.isEmpty()
                 ? Optional.empty()
                 : Optional.of(new Criteria().andOperator(criteriaList.toArray(new Criteria[0])));
+    }
+
+    /**
+     * Create equality criteria for a filter. Query parameters always arrive as strings, so the
+     * typed representation of each value is matched as well — otherwise equality filters on
+     * numeric, boolean or date fields never match anything.
+     *
+     * @param field  Field to match.
+     * @param values Received values.
+     * @return Equality criteria.
+     */
+    private Criteria createEqualityCriteria(String field, Object[] values) {
+
+        List<Object> candidates = new ArrayList<>();
+
+        for (Object value : values) {
+            if (value == null) {
+                continue;
+            }
+
+            String raw = value.toString();
+
+            if (!candidates.contains(raw)) {
+                candidates.add(raw);
+            }
+
+            Object parsed = parseValue(raw);
+
+            if (!candidates.contains(parsed)) {
+                candidates.add(parsed);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return new Criteria();
+        }
+
+        return candidates.size() == 1
+                ? Criteria.where(field).is(candidates.get(0))
+                : Criteria.where(field).in(candidates);
+    }
+
+    /**
+     * Compile a client supplied regular expression.
+     *
+     * @param regex           Regular expression as received.
+     * @param caseInsensitive Whether matching should ignore case.
+     * @return Compiled pattern.
+     */
+    private static Pattern compilePattern(String regex, boolean caseInsensitive) {
+
+        try {
+            return caseInsensitive ? Pattern.compile(regex, Pattern.CASE_INSENSITIVE) : Pattern.compile(regex);
+        } catch (PatternSyntaxException e) {
+            throw new FilterException("Invalid regular expression in filter: " + regex, FILTER_ERROR_CODE);
+        }
     }
 
     public String retrieveNextId() {
@@ -347,17 +494,34 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         List<Criteria> criteriaList = new ArrayList<>();
 
         for (Filter rs : filters) {
-            if (!"filters".equals(rs.getField()) || rs.getValue() == null) {
+            if (!FILTERS_FIELD.equals(rs.getField()) || rs.getValue() == null) {
                 continue;
             }
 
             for (Object element : rs.getValue()) {
-                String expr = element.toString();
+                if (element == null || element.toString().trim().isEmpty()) {
+                    continue;
+                }
+
+                String expr = element.toString().trim();
 
                 if (expr.contains("[?(")) {
                     // Array field with condition
-                    String arrayField = expr.substring(0, expr.indexOf("["));
-                    String conditionPart = expr.substring(expr.indexOf("[?(") + 3, expr.indexOf(")]"));
+                    int conditionStart = expr.indexOf("[?(");
+                    int conditionEnd = expr.indexOf(")]", conditionStart);
+
+                    if (conditionEnd < 0) {
+                        throw new FilterException("Unterminated array filter expression: " + expr,
+                                FILTER_ERROR_CODE);
+                    }
+
+                    String arrayField = expr.substring(0, conditionStart).trim();
+                    String conditionPart = expr.substring(conditionStart + 3, conditionEnd);
+
+                    if (arrayField.isEmpty()) {
+                        throw new FilterException("Missing array field in filter expression: " + expr,
+                                FILTER_ERROR_CODE);
+                    }
 
                     Criteria elemMatch = parseLogicalExpression(conditionPart);
                     criteriaList.add(Criteria.where(arrayField).elemMatch(elemMatch));
@@ -373,75 +537,126 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
         return criteriaList;
     }
 
+    /**
+     * Parse a logical filter expression. {@code ||} binds looser than {@code &&}, so the
+     * expression is split on {@code ||} first and each part is then parsed on its own.
+     *
+     * @param expression Logical expression.
+     * @return Criteria for the expression.
+     */
     private Criteria parseLogicalExpression(String expression) {
-        if (expression.contains("||")) {
-            String[] orParts = expression.split("\\|\\|");
+
+        String[] orParts = expression.split("\\|\\|");
+        if (orParts.length > 1) {
             List<Criteria> orCriteriaList = Arrays.stream(orParts)
-                    .map(this::parseSimpleConditions)
+                    .map(this::parseLogicalExpression)
                     .collect(Collectors.toList());
             return new Criteria().orOperator(orCriteriaList.toArray(new Criteria[0]));
-        } else if (expression.contains("&&")) {
-            String[] andParts = expression.split("&&");
+        }
+
+        String[] andParts = expression.split("&&");
+        if (andParts.length > 1) {
             List<Criteria> andCriteriaList = Arrays.stream(andParts)
                     .map(this::parseSimpleConditions)
                     .collect(Collectors.toList());
             return new Criteria().andOperator(andCriteriaList.toArray(new Criteria[0]));
-        } else {
-            return parseSimpleConditions(expression);
         }
+
+        return parseSimpleConditions(expression);
     }
-    private Criteria parseSimpleConditions(String condition) {
-        condition = condition.trim().replaceAll("@\\.", "");
+
+    /**
+     * Parse a single {@code field==value} style condition.
+     *
+     * @param rawCondition Condition to parse.
+     * @return Criteria for the condition.
+     */
+    private Criteria parseSimpleConditions(String rawCondition) {
+        String condition = rawCondition.trim().replaceAll("@\\.", "");
 
         if (condition.contains("regex==")) {
-            String[] parts = condition.split("regex==");
-            if (parts.length == 2) {
-                String field = parts[0].trim();
-                String regex = parts[1].replaceAll("'", "").trim();
-                return Criteria.where(field).regex(regex);
+            String[] parts = condition.split("regex==", 2);
+            String field = parts[0].trim();
+            String regex = parts[1].replace("'", "").trim();
+
+            if (!field.isEmpty() && !regex.isEmpty()) {
+                // Kept case sensitive to preserve the behaviour of existing filter expressions.
+                return Criteria.where(field).regex(compilePattern(regex, false));
             }
         } else if (condition.contains("!=")) {
-            String[] parts = condition.split("!=");
-            if (parts.length == 2) {
-                String field = parts[0].trim();
-                String val = parts[1].replaceAll("'", "").trim();
+            String[] parts = condition.split("!=", 2);
+            String field = parts[0].trim();
+            String val = parts[1].replace("'", "").trim();
+
+            if (!field.isEmpty()) {
                 return Criteria.where(field).ne(val);
             }
         } else if (condition.contains("==")) {
-            String[] parts = condition.split("==");
-            if (parts.length == 2) {
-                String field = parts[0].trim();
-                String val = parts[1].replaceAll("'", "").trim();
+            String[] parts = condition.split("==", 2);
+            String field = parts[0].trim();
+            String val = parts[1].replace("'", "").trim();
+
+            if (!field.isEmpty()) {
                 return Criteria.where(field).is(val);
             }
         }
 
-        // Fallback for unknown format
-        return new Criteria();
+        // An unparseable condition used to fall back to empty criteria, which silently matched
+        // every document in the collection. Reject it instead.
+        throw new FilterException("Unsupported filter expression: " + rawCondition.trim(), FILTER_ERROR_CODE);
     }
 
-    private static Object parseValue(String value) {
-        if (value.matches("^\\d+$")) {
-            return Integer.parseInt(value);
-        } else if (value.matches("^\\d+\\.\\d+$")) {
-            return Double.parseDouble(value); // Double
-        } else if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-            return Boolean.parseBoolean(value); // Boolean
-        } else if (value.matches("^'\\d{4}-\\d{2}-\\d{2}'$")) { // Date format 'yyyy-MM-dd'
+    /**
+     * Convert a received filter value into the type it should be matched as. Values arrive as
+     * strings, optionally single quoted, and are matched as string when no other type applies.
+     *
+     * @param rawValue Value as received.
+     * @return Typed value to match on.
+     */
+    private static Object parseValue(String rawValue) {
+
+        String value = rawValue.replace("'", "").trim();
+
+        if (INTEGER_VALUE.matcher(value).matches()) {
             try {
-                LocalDate localDate = LocalDate.parse(value.replace("'", ""), DateTimeFormatter.ISO_LOCAL_DATE);
-                return localDate.atStartOfDay().atOffset(ZoneOffset.UTC);
-            } catch (DateTimeParseException e) {
-                throw  e;
+                return Integer.valueOf(value);
+            } catch (NumberFormatException e) {
+                // Larger than an int, e.g. an epoch milliseconds timestamp.
+                try {
+                    return Long.valueOf(value);
+                } catch (NumberFormatException ex) {
+                    return value;
+                }
             }
-        } else if (value.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$")) { // OffsetDateTime format 'yyyy-MM-ddTHH:mm:ss±HH:mm'
-            try {
-                return OffsetDateTime.parse(value.replace("'", ""), DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-            } catch (DateTimeParseException e) {
-                throw e;
-            }
-        } else {
-            return value.replace("'", "");
         }
+
+        if (DECIMAL_VALUE.matcher(value).matches()) {
+            return Double.valueOf(value);
+        }
+
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.valueOf(value);
+        }
+
+        // Date format 'yyyy-MM-dd', with or without the surrounding quotes.
+        if (DATE_VALUE.matcher(value).matches()) {
+            try {
+                return LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE)
+                        .atStartOfDay().atOffset(ZoneOffset.UTC);
+            } catch (DateTimeParseException e) {
+                throw new FilterException("Invalid date in filter: " + rawValue, FILTER_ERROR_CODE);
+            }
+        }
+
+        // Offset date time format 'yyyy-MM-ddTHH:mm:ss±HH:mm', 'Z' included.
+        if (DATE_TIME_VALUE.matcher(value).matches()) {
+            try {
+                return OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                throw new FilterException("Invalid date time in filter: " + rawValue, FILTER_ERROR_CODE);
+            }
+        }
+
+        return value;
     }
 }

@@ -44,7 +44,9 @@ public class CustomErrorAttributes extends DefaultErrorAttributes {
     public Map<String, Object> getErrorAttributes(WebRequest webRequest, ErrorAttributeOptions options) {
         Throwable error = getError(webRequest);
         if (error == null) {
-            return null;
+            // No exception behind the error dispatch (e.g. a sendError from a filter). Returning
+            // null here would break error rendering, so fall back to the default attributes.
+            return super.getErrorAttributes(webRequest, options);
         }
         if (error instanceof ValidationException) {
             return handleValidationException((ValidationException) error);
@@ -135,6 +137,7 @@ public class CustomErrorAttributes extends DefaultErrorAttributes {
         error.printStackTrace(new PrintWriter(stackTrace));
         stackTrace.flush();
 
-        return stackTrace.toString().replace("\t", "    ").split("\r\n");
+        // Split on any line terminator — the trace is a single line on platforms that do not use CRLF.
+        return stackTrace.toString().replace("\t", "    ").split("\\R");
     }
 }
