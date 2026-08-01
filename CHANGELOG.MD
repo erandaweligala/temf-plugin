@@ -86,3 +86,11 @@
 - tenant collection prefix is resolved from the `tenantId` header instead of `catalogId`
 - error responses no longer fail when the error dispatch carries no exception
 
+
+## [5.2.11] - 2026-08-01
+### Fixed
+- the OpenAPI server URL is a real URL (`app.protocol://app.host:app.port`) instead of the bare
+  `app.host` value, which swagger-ui resolved against the UI page so "Try it out" never reached
+  the service; `app.context.relative` is appended when a gateway routes on a different prefix
+- the API documentation title, description and version come from `app.swagger.*` instead of the
+  hardcoded "Swagger Title" placeholders
