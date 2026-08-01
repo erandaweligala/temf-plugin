@@ -70,5 +70,19 @@ The `Info` block is taken from `app.swagger.*`. The documented server URL is bui
 Paths in the document already contain `app.context.absolute`, because that is what the
 controllers are mapped on.
 
+##### Filters on the query operation
+
+The query operation receives its filters as a catch-all `Map<String, String>` request parameter.
+There is no method argument per filter, so springdoc has no names to document and the UI showed
+only `fields`, `offset` and `limit`. The operation therefore declares the filters explicitly as a
+free form object with `style: form` and `explode: true`, which is how swagger-ui serialises them:
+
+```
+{"name": "data plan", "lastUpdate.gte": "2024-01-01"}   ->   ?name=data%20plan&lastUpdate.gte=2024-01-01
+```
+
+Enter the pairs in the `filters` box in Swagger UI. Filters keep working exactly as before for
+callers that build the query string themselves; only the documentation changed.
+
 Do not add `springfox` to a service that uses the plugin. Springfox serves a different, older UI
 and both libraries register resource handlers for the documentation paths.

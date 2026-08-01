@@ -88,6 +88,11 @@
 
 
 ## [5.2.11] - 2026-08-01
+### Added
+- the query endpoint documents its filters: they are a catch-all `Map` request parameter, which
+  springdoc cannot derive parameter names from, so the operation now declares a free form
+  `filters` object that swagger-ui explodes into individual query parameters
+
 ### Fixed
 - `LoggingAdvice` only matches handlers in `com.adl..*`, so it no longer wraps the handlers of
   libraries on the classpath; springdoc's `/v3/api-docs/swagger-config` was answered with a 500
