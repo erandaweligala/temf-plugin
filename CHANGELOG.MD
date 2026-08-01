@@ -89,6 +89,11 @@
 
 ## [5.2.11] - 2026-08-01
 ### Fixed
+- `LoggingAdvice` only matches handlers in `com.adl..*`, so it no longer wraps the handlers of
+  libraries on the classpath; springdoc's `/v3/api-docs/swagger-config` was answered with a 500
+  because the advice cast its `Map` return value to `ResponseEntity`
+- a handler that returns its body instead of a `ResponseEntity` is logged with status 200 rather
+  than failing with a `ClassCastException`
 - the OpenAPI server URL is a real URL (`app.protocol://app.host:app.port`) instead of the bare
   `app.host` value, which swagger-ui resolved against the UI page so "Try it out" never reached
   the service; `app.context.relative` is appended when a gateway routes on a different prefix
