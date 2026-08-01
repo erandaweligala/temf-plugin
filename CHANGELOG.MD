@@ -58,3 +58,21 @@
 ### added
 - ignore modify filters specific reason
 
+## [5.2.10]
+### Fixed
+- filter values are matched with their type, so equality filters on numeric, boolean and date
+  fields no longer return an empty result
+- comparison filters accept numbers larger than an int (for example epoch milliseconds) instead
+  of failing the request
+- comparison filters accept negative numbers
+- date filters accept `yyyy-MM-dd` without quotes and offsets other than `Z`
+- `&&` and `||` can be combined in one filter expression; previously such an expression matched
+  every document in the collection
+- an unparseable filter expression or an invalid regex is rejected with 400 instead of matching
+  every document or failing with 500
+- `offset` and `limit` can be used independently, are validated, and no longer produce an
+  invalid `$limit` stage; `limit` alone previously returned the whole collection
+- the `addOperations` extension point is applied again, to both the result and the count query
+- tenant collection prefix is resolved from the `tenantId` header instead of `catalogId`
+- error responses no longer fail when the error dispatch carries no exception
+

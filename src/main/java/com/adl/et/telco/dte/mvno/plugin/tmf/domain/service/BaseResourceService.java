@@ -202,18 +202,20 @@ public abstract class BaseResourceService<T extends BaseResourceDocument> {
     }
 
     public String getCollectionName() {
-        String catalog = null;
-        String tenant = null;
+
         StringBuilder sb = new StringBuilder();
-        if (Objects.nonNull(httpServletRequest.getHeader(CATALOG_ID)) && !httpServletRequest.getHeader(CATALOG_ID).equals("") ){
-           // catalog = ;
-            sb.append(httpServletRequest.getHeader(CATALOG_ID)).append("_");
-        }
-        if(Objects.nonNull(httpServletRequest.getHeader(TENANT_ID)) && !"".equals(httpServletRequest.getHeader(CATALOG_ID))){
-            sb.append(httpServletRequest.getHeader(TENANT_ID)).append("_");
+
+        String catalogId = httpServletRequest.getHeader(CATALOG_ID);
+        if (Objects.nonNull(catalogId) && !catalogId.isEmpty()) {
+            sb.append(catalogId).append("_");
         }
 
-        if(sb.length() == 0){
+        String tenantId = httpServletRequest.getHeader(TENANT_ID);
+        if (Objects.nonNull(tenantId) && !tenantId.isEmpty()) {
+            sb.append(tenantId).append("_");
+        }
+
+        if (sb.length() == 0) {
             return null;
         }
         return sb.toString();
