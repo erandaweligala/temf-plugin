@@ -50,7 +50,7 @@ public class MergeAdaptor implements MergeAdaptorInterface {
     }
 
     /**
-     * RFC 7396 JSON Merge Patch applied via Jackson JsonNode — no jakarta.json dependency.
+     * RFC 7396 JSON Merge Patch applied via Jackson JsonNode — no JSON-P (javax.json) dependency.
      * Null patch fields remove the key; non-null fields overwrite recursively.
      */
     private JsonNode applyMergePatch(JsonNode target, JsonNode patch) {

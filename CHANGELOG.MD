@@ -59,6 +59,16 @@
 - ignore modify filters specific reason
 
 ## [5.2.10]
+### Changed
+- build and runtime baseline moved down to Java 11 (bytecode target 11) on Spring Boot 2.7.18 and
+  Spring Cloud 2021.0.9
+- servlet and validation imports moved from `jakarta.*` back to `javax.*`
+- HTTP client pool built with Apache HttpClient 4.5 instead of HttpClient 5, which is what
+  `HttpComponentsClientHttpRequestFactory` supports on Spring 5
+- `HttpResponse.status` is a `HttpStatus` again, `HttpStatusCode` only exists in Spring 6
+- springdoc switched to `springdoc-openapi-ui` 1.7.0 and the embedded Mongo test dependency to the
+  `spring27x` variant
+
 ### Fixed
 - filter values are matched with their type, so equality filters on numeric, boolean and date
   fields no longer return an empty result

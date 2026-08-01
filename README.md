@@ -1,6 +1,11 @@
 # TMF Plugin
 ### TMF plugin for TMF services
 
+#### Requirements
+
+- Java 11 or above
+- Spring Boot 2.7.x (the plugin uses the `javax.*` servlet and validation namespaces)
+
 #### Enabling plugin
 
 1. Include dependency in `pom.xml`

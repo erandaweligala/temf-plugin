@@ -9,7 +9,7 @@ import com.adl.et.telco.dte.mvno.plugin.tmf.domain.entities.FilterOperation;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.entities.Page;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.entities.Pageable;
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.service.BaseResourceService;
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
