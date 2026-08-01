@@ -8,6 +8,7 @@ import lombok.SneakyThrows;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Pointcut;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
@@ -29,26 +30,37 @@ public class LoggingAdvice {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Only our own handlers are logged. Without this the advice also wraps the handlers of
+     * libraries on the classpath - springdoc serves {@code /v3/api-docs/swagger-config} from a
+     * {@code @GetMapping} that takes the request as its last argument and returns a Map, which
+     * this advice then failed to handle.
+     */
+    @Pointcut("within(com.adl..*)")
+    public void applicationHandler() {
+        // pointcut declaration only
+    }
+
     @SneakyThrows
-    @Around("@annotation(org.springframework.web.bind.annotation.GetMapping) && args(.., request)")
+    @Around("applicationHandler() && @annotation(org.springframework.web.bind.annotation.GetMapping) && args(.., request)")
     public Object logGetMethod(ProceedingJoinPoint jointPoint, HttpServletRequest request) {
         return logRequest(jointPoint, request);
     }
 
     @SneakyThrows
-    @Around("@annotation(org.springframework.web.bind.annotation.PostMapping) && args(@RequestBody body,.., request)")
+    @Around("applicationHandler() && @annotation(org.springframework.web.bind.annotation.PostMapping) && args(@RequestBody body,.., request)")
     public Object logPostMethod(ProceedingJoinPoint jointPoint, HttpServletRequest request, Object body) {
         return logRequest(jointPoint, request);
     }
 
     @SneakyThrows
-    @Around("@annotation(org.springframework.web.bind.annotation.PatchMapping) && args(@RequestBody body,.., request)")
+    @Around("applicationHandler() && @annotation(org.springframework.web.bind.annotation.PatchMapping) && args(@RequestBody body,.., request)")
     public Object logPatchMethod(ProceedingJoinPoint jointPoint, HttpServletRequest request, Object body) {
         return logRequest(jointPoint, request);
     }
 
     @SneakyThrows
-    @Around("@annotation(org.springframework.web.bind.annotation.DeleteMapping) && args(.., request)")
+    @Around("applicationHandler() && @annotation(org.springframework.web.bind.annotation.DeleteMapping) && args(.., request)")
     public Object logDeleteMethod(ProceedingJoinPoint jointPoint, HttpServletRequest request) {
         return logRequest(jointPoint, request);
     }
@@ -231,15 +243,17 @@ public class LoggingAdvice {
 
     @SneakyThrows
     public Object logResponseAndHeader(ProceedingJoinPoint joinPoint, long start, String className, String methodName) {
-        ResponseEntity<?> result;
+        Object result;
         try {
-            result = (ResponseEntity<?>) joinPoint.proceed();
+            result = joinPoint.proceed();
             MDC.put(LoggingAdviceConstants.CLASS_NAME, className);
             MDC.put(LoggingAdviceConstants.METHOD_NAME, methodName);
-            String resultCode = result.getStatusCode().toString();
-            int statusCodeValue = result.getStatusCode().value();
+            // a handler may return the body itself, in which case the status is the default 200
+            HttpStatus status = result instanceof ResponseEntity
+                    ? ((ResponseEntity<?>) result).getStatusCode()
+                    : HttpStatus.OK;
             long elapsedTime = System.currentTimeMillis() - start;
-            log.info(LoggingAdviceConstants.REQUEST_TERMINATED, resultCode, statusCodeValue, elapsedTime);
+            log.info(LoggingAdviceConstants.REQUEST_TERMINATED, status.toString(), status.value(), elapsedTime);
             if (log.isDebugEnabled()) {
                 String response = objectMapper.writeValueAsString(result);
                 log.debug(LoggingAdviceConstants.FULL_RESPONSE, response);
