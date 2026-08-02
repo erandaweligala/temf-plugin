@@ -14,6 +14,12 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.Explode;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.enums.ParameterStyle;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -84,6 +90,30 @@ public abstract class BaseResourceController<T extends BaseResourceDocument, C, 
      * @param limit   Limit of the pagination.
      * @return Query result.
      */
+    @Operation(summary = "Query resources",
+            description = "Filters are sent as plain query parameters. `name=value` matches on "
+                    + "equality, the `.eq`, `.gt`, `.gte`, `.lt`, `.lte` and `.regex` suffixes "
+                    + "select the operation, comma separated values are matched with OR, and "
+                    + "nested fields are addressed with a dot, for example "
+                    + "`attachment.name=pic1,pic2`.",
+            parameters = {
+                    // The filters are a catch-all map, so there is no method argument to derive
+                    // the query parameter names from. Documented as a free form object that is
+                    // exploded into separate query parameters, which is how it arrives here.
+                    @Parameter(name = "filters", in = ParameterIn.QUERY,
+                            description = "Field name and value pairs to filter on.",
+                            style = ParameterStyle.FORM, explode = Explode.TRUE,
+                            example = "{\"name\": \"data plan\", \"lastUpdate.gte\": \"2024-01-01\"}",
+                            schema = @Schema(type = "object",
+                                    additionalProperties = Schema.AdditionalPropertiesValue.TRUE)),
+                    @Parameter(name = "fields", in = ParameterIn.QUERY,
+                            description = "Comma separated top level fields to return.",
+                            example = "name,description"),
+                    @Parameter(name = "offset", in = ParameterIn.QUERY,
+                            description = "Number of resources to skip.", example = "0"),
+                    @Parameter(name = "limit", in = ParameterIn.QUERY,
+                            description = "Maximum number of resources to return.", example = "10")
+            })
     @GetMapping(value = "", produces = MediaType.APPLICATION_JSON_VALUE)
     @CircuitBreaker(name = "base_query", fallbackMethod = "circuitBreakerFallback")
     public ResponseEntity<List<Map<String, Object>>> query(
