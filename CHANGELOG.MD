@@ -94,6 +94,9 @@
   `filters` object that swagger-ui explodes into individual query parameters
 
 ### Fixed
+- a paged query carries the request context onto the shared query executor, so the tenant and
+  catalog headers stay readable while the results and the count run in parallel; without it the
+  request failed with `IllegalStateException: No thread-bound request found`
 - `LoggingAdvice` only matches handlers in `com.adl..*`, so it no longer wraps the handlers of
   libraries on the classpath; springdoc's `/v3/api-docs/swagger-config` was answered with a 500
   because the advice cast its `Map` return value to `ResponseEntity`

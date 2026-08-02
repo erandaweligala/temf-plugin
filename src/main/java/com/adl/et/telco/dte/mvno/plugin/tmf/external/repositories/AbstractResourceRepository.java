@@ -5,6 +5,7 @@ import com.adl.et.telco.dte.mvno.plugin.tmf.domain.boundary.ResourceRepositoryIn
 import com.adl.et.telco.dte.mvno.plugin.tmf.domain.entities.*;
 import com.adl.et.telco.dte.mvno.plugin.tmf.external.repositories.utils.MongoSequenceEntity;
 import org.bson.Document;
+import org.slf4j.MDC;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
@@ -12,6 +13,8 @@ import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -21,6 +24,7 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
@@ -144,10 +148,12 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
 
             // Run in parallel using shared executor (not per-request pool)
             CompletableFuture<List<T>> resultsFuture = CompletableFuture.supplyAsync(
-                    () -> mongoTemplate.aggregate(resultAgg, clazz, clazz).getMappedResults(), queryExecutor);
+                    onRequestContext(() -> mongoTemplate.aggregate(resultAgg, clazz, clazz).getMappedResults()),
+                    queryExecutor);
 
             CompletableFuture<Long> countFuture = CompletableFuture.supplyAsync(
-                    () -> count(allCriteria.isEmpty() ? null : finalCriteria, customOperations), queryExecutor);
+                    onRequestContext(() -> count(allCriteria.isEmpty() ? null : finalCriteria, customOperations)),
+                    queryExecutor);
 
             List<T> results = resultsFuture.join();
             Long total = countFuture.join();
@@ -191,6 +197,38 @@ public abstract class AbstractResourceRepository<T extends BaseResourceDocument>
 
         // total == results.size() on this path — no skip/limit applied, so count() would be redundant
         return new Page<>(results, results.size());
+    }
+
+    /**
+     * Carry the request context of the calling thread into a task that runs on the shared
+     * executor. Per-request state - the tenant and catalog headers read through the request
+     * scoped {@code HttpServletRequest}, and the logging MDC - is held in thread locals, so
+     * without this a pool thread fails with "No thread-bound request found". The caller joins on
+     * the futures before returning, so the request is still active while the task runs.
+     *
+     * @param task Task to run on the executor.
+     * @param <R>  Result of the task.
+     * @return Task wrapped with the context of the calling thread.
+     */
+    private <R> Supplier<R> onRequestContext(Supplier<R> task) {
+
+        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+        Map<String, String> contextMap = MDC.getCopyOfContextMap();
+
+        return () -> {
+            if (requestAttributes != null) {
+                RequestContextHolder.setRequestAttributes(requestAttributes);
+            }
+            if (contextMap != null) {
+                MDC.setContextMap(contextMap);
+            }
+            try {
+                return task.get();
+            } finally {
+                RequestContextHolder.resetRequestAttributes();
+                MDC.clear();
+            }
+        };
     }
 
     /**
